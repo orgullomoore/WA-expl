@@ -15,7 +15,7 @@ This was the hard part. I wanted only case law specific to Washington. Court Lis
 - Opinion Clusters - A mapping of which majority opinions, concurrences, and dissents belong to single "clusters," i.e., the court's disposition of a particular case. The file looks something like "opinion-clusters-2025-12-02.csv.bz2" and is 2.3 GB.
 - Opinions - The full text of the opinions. The file looks something like "opinions-2025-12-02.csv.bz2" and is 49.9 GB 
 - Citations Map - A "narrow table that indicates which opinion cited which and how deeply."
-- Parentheticals - A collection of explanatory parentheticals, which are useful for determining what proposition a given case is cited for e.g., the part in parenthesis in: "*Merrion v. Jicarilla Apache Tribe*, 455 U.S. 130, 137, 102 S.Ct. 894, 71 L.Ed.2d 21 (1982) (holding that only in Indian country may tribes exercise powers over nonmembers)."
+- Parentheticals - A collection of explanatory parentheticals, which are useful for determining what proposition a given case is cited for e.g., the part in parenthesis in: "*Merrion v. Jicarilla Apache Tribe*, 455 U.S. 130, 137, 102 S.Ct. 894, 71 L.Ed.2d 21 (1982) **(holding that only in Indian country may tribes exercise powers over nonmembers)**."
 
 If you just download the Opinions file, you will not have any information about what case you're looking at other than what you can discern from the text itself. 
 (to be continued...)
