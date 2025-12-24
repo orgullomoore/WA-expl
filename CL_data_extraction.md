@@ -51,7 +51,7 @@ The output was:
 
 ChatGPT helped me develop a strategy for tying the data I wanted together. Its idea was (in its own words):
 
-1. **Start with opinion clusters, not opinions.** Because Court Listener groups majority opinions, concurrences, and dissents into “clusters” representing a single case disposition, the *cluster* is the right unit of analysis for case law. If you identify which clusters belonged to Washington courts, you can ignore the overwhelming majority of non-Washington data.
+1. **Start with opinion clusters, not opinions.** Because Court Listener groups majority opinions, concurrences, and dissents into “clusters” representing a single case disposition, the *cluster* is the right unit of analysis for case law. If you identify which clusters belong to Washington courts, you can ignore the overwhelming majority of non-Washington data.
 
 2. **Identify Washington clusters using metadata tables first.** Rather than touching the 50-GB opinions file immediately, first work with smaller, more structured tables (courts, dockets, and opinion clusters) to determine which `cluster_id`s corresponded to Washington state courts.
 
