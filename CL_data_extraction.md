@@ -801,11 +801,5 @@ if __name__ == "__main__":
 Et voilà !  After a few minutes, I had 147,782 rows inserted into my database. 
 
 ## Lesson learned
-CourtListener bulk “opinions” is a PostgreSQL COPY ... CSV export. You must parse it with
-```python
-quotechar='"'
-doublequote=False
-escapechar='\\'
-```
-and raise csv.field_size_limit (opinions routinely exceed 131k chars). If you parse with default CSV settings, the parser will lose quoting context when it encounters backslash-escaped quotes, and then newlines inside the opinion text will be misread as row boundaries—producing “rows” that start with &lt;p id=...> and breaking downstream imports.
+CourtListener bulk “opinions” is a PostgreSQL <code>COPY ... CSV</code> export. You must parse it with <code>quotechar='"'</code>, <code>doublequote=False</code>, <code>escapechar='\\'</code>, and raise <code>csv.field_size_limit</code> (opinions routinely exceed 131k chars). If you parse with default CSV settings, the parser will lose quoting context when it encounters backslash-escaped quotes, and then newlines inside the opinion text will be misread as row boundaries—producing “rows” that start with &lt;p id=...> and breaking downstream imports.
 
