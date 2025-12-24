@@ -338,7 +338,7 @@ A typical cluster row looks like this:
 The cluster ID is the key to getting to an opinion from Court Listener. A cluster ID will take you directly to an opinion: https://www.courtlistener.com/opinion/3160512/any-slug-will-do/ takes you directly to the opinion referenced above (*State v. Lizarraga*, 364 P.3d 810, 191 Wash. App. 530 (2015)).
 
 ### Building the whitelist
-So, for my initial task of identifying which opinions were within the clusters that were within the dockets that were associated with the courts within the scope of my project, I just needed column 1 (the cluster ID) from every row where column 33 (the docket ID) was in my previously-generated list of docket IDs associated with Washington courts. 
+So, for my initial task of identifying which opinions were within the clusters that were within the dockets that were associated with the courts within the scope of my project, I just needed column 0 (the cluster ID) from every row where column 33 (the docket ID) was in my previously-generated list of docket IDs associated with Washington courts. 
 
 I accomplished that with the following code:
 ```python
