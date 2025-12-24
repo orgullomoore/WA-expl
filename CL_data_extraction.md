@@ -446,7 +446,7 @@ escapechar='\\'
 doublequote=False
 ```
 
-Even after knowing of this dialect, neither ChatGPT nor Claude were able to come up with a way to give me a file that I could import into my database. After many, many failed attempts–each taking hours long, ChatGPT told me quite curtly:
+Even after knowing of this dialect, neither ChatGPT nor Claude were able to come up with a way to give me a file that I could import into my database. After many, many failed attempts–each taking hours long–ChatGPT told me quite curtly:
 >Here is the clean diagnosis and the only sane way forward.
 >
 >What is actually wrong (now proven)
