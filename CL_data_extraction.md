@@ -57,17 +57,385 @@ ChatGPT helped me develop a strategy for tying the data I wanted altogether. Its
 
 3. **Build a whitelist of Washington `cluster_id`s.** Once you have a definitive list of Washington-specific cluster IDs, treat that list as a filter and ignore everything else in the opinions table.
 
+
 4. **Stream the opinions file once, filtering on the fly.** Instead of extracting or storing all opinion text, stream through `opinions-2025-12-02.csv.bz2` exactly once, row by row, and write out only those rows whose `cluster_id` appeared in my Washington whitelist.
 
 ### Opinion clusters
-(incomplete)
-### Identifying Washington clusters using metadata tables
-(incomplete)
-### Building the whe whitelist
-(incomplete)
-### Streaming the opinions file
+#### Court abbreviations
+First, I needed to determine the abbreviations Court Listener uses for the courts within my scope. As the documentation says: "Because nearly every data type happens in a court, you'll probably need this table to import any other data type below." 
 
-In an ideal world, streaming a CSV file in Python would be as simple as my simple snippet above. And yet, we do not live in an ideal world. The data inside these CSV files is messy, especially the 50 GB opinions file. It comprises 15+ years of scraped data from various sources containing all sorts of XML/HTML tags, quotation marks and other problematic characters, and so forth. 
+The header for this table contains the following columns:
+```bash
+=== courts CSV HEADER ===
+  0: id
+  1: pacer_court_id
+  2: pacer_has_rss_feed
+  3: pacer_rss_entry_types
+  4: date_last_pacer_contact
+  5: fjc_court_id
+  6: date_modified
+  7: in_use
+  8: has_opinion_scraper
+  9: has_oral_argument_scraper
+ 10: position
+ 11: citation_string
+ 12: short_name
+ 13: full_name
+ 14: url
+ 15: start_date
+ 16: end_date
+ 17: jurisdiction
+ 18: notes
+ 19: parent_court_id
+```
+I used the following code to inspect the CSV and find the most likely to be Washington-specific:
+```python
+import bz2, csv, re
+from collections import defaultdict
+
+path = r"C:\Users\orgul\Downloads\courts-2025-12-02.csv.bz2"
+# Heuristics to find WA-ish rows without assuming column names.
+WA_PAT = re.compile(r"\b(Washington|Wash\.|WA)\b", re.IGNORECASE)
+WA_ID_HINT = re.compile(r"\b(wash|washctapp|washterr|washag)\b", re.IGNORECASE)
+
+with bz2.open(path, "rt", encoding="utf-8", errors="replace", newline="") as f:
+    reader = csv.reader(f)
+    header = next(reader)
+
+    print("=== courts CSV HEADER ===")
+    for i, col in enumerate(header):
+        print(f"{i:3d}: {col}")
+
+    # Scan a chunk and collect rows that look WA-related
+    matches = []
+    for row in reader:
+        joined = " | ".join(row)
+        if WA_PAT.search(joined) or WA_ID_HINT.search(joined):
+            matches.append(row)
+            if len(matches) >= 50:
+                break
+
+print("\n=== FIRST 50 WA-LIKE ROWS (raw) ===")
+for r in matches:
+    print(r)
+```
+
+All that did for me was give me the dictionary I would need for my next step:
+
+```python
+WA = {"wash", "washctapp", "washag", "washterr"}
+```
+And honestly, I could have just gone to the Court Listener case law search page and selected Washington State courts in the "Select Jurisdictions" box and searched "anything", which would have taken me to this URL: https://www.courtlistener.com/?type=o&q=anything&type=o&order_by=score%20desc&court=wash%20washctapp%20washag%20washterr (note: "wash", "washctapp", "washag", and "washterr" are all there).
+
+#### Docket IDs
+Next, I needed a list of docket IDs belonging to Washington courts. As the documentation says: 
+>"Dockets contain high-level case information like the docket number, case name, etc. This table contains many millions of rows and should be imported before the opinions data below. A docket can have multiple opinion clusters within it, just like a real life case can have multiple opinions and orders."
+
+The following code was used:
+```python
+import bz2, csv, time
+
+src = r"C:\Users\orgul\Downloads\dockets-2025-12-02.csv.bz2"
+out = r"C:\Users\orgul\Downloads\wa_docket_ids.csv"
+
+WA = {"wash", "washctapp", "washag", "washterr"}
+
+t0 = time.time()
+n_in = 0
+n_out = 0
+
+with bz2.open(src, "rt", encoding="utf-8", errors="replace", newline="") as f_in, \
+     open(out, "w", encoding="utf-8", newline="") as f_out:
+
+    r = csv.DictReader(f_in)
+    w = csv.writer(f_out)
+    w.writerow(["docket_id", "court_id"])
+
+    for row in r:
+        n_in += 1
+        c = row.get("court_id", "")
+        if c in WA:
+            w.writerow([row["id"], c])
+            n_out += 1
+
+        if n_in % 5_000_000 == 0:
+            dt = time.time() - t0
+            print(f"...scanned {n_in:,} rows in {dt/60:.1f} min; matched {n_out:,}")
+
+dt = time.time() - t0
+print(f"\nDONE. Scanned {n_in:,} rows; matched {n_out:,}")
+print(f"Output: {out}")
+print("OK: WA docket extract complete")
+```
+
+That produced this file, which is a simple two-column CSV with 134,764 rows–the docket ID in the first column, and the court code (e.g., wash = Supreme Court of Washington; washctapp = Washington Court of Appeals) in the second column: [wa_docket_ids.csv](https://raw.githubusercontent.com/orgullomoore/WA-expl/refs/heads/main/wa_docket_ids.csv) 
+
+### Identifying Washington clusters using opinion-clusters table
+The next step was to find out what clusters were associated with my docket IDs. As the documentation says: "Clusters serve the purpose of grouping dissenting and concurring opinions together. Each cluster tends to have a lot of metadata about the opinion(s) that it groups together." In other words, if you want an opinion, you need a cluster ID. And as we know, if you want a cluster ID, you need a docket ID (and if you want a docket ID, you need a court abbreviation). 
+
+My opinion-clusters-2025-12-02.csv.bz2 file had the following header:
+```bash
+=== OPINION CLUSTERS CSV HEADER ===
+  0: id
+  1: date_created
+  2: date_modified
+  3: judges
+  4: date_filed
+  5: date_filed_is_approximate
+  6: slug
+  7: case_name_short
+  8: case_name
+  9: case_name_full
+ 10: scdb_id
+ 11: scdb_decision_direction
+ 12: scdb_votes_majority
+ 13: scdb_votes_minority
+ 14: source
+ 15: procedural_history
+ 16: attorneys
+ 17: nature_of_suit
+ 18: posture
+ 19: syllabus
+ 20: headnotes
+ 21: summary
+ 22: disposition
+ 23: history
+ 24: other_dates
+ 25: cross_reference
+ 26: correction
+ 27: citation_count
+ 28: precedential_status
+ 29: date_blocked
+ 30: blocked
+ 31: filepath_json_harvard
+ 32: filepath_pdf_harvard
+ 33: docket_id
+ 34: arguments
+ 35: headmatter
+```
+
+To see what I was working with, I created the following code to output the first 25 Washington-specific cluster rows as JSON objects:
+
+```python
+import bz2, csv, time, sys
+t0 = time.time()
+import json
+
+# IMPORTANT: allow very large CSV fields (CourtListener text columns)
+max_int = sys.maxsize
+while True:
+    try:
+        csv.field_size_limit(max_int)
+        break
+    except OverflowError:
+        max_int = int(max_int / 10)
+
+DOCKET_IDS = r"C:\Users\orgul\Downloads\wa_docket_ids.csv"
+INFILE     = r"C:\Users\orgul\Downloads\opinion-clusters-2025-12-02.csv.bz2"
+def output_25_WA_clusters():
+    # Define the headers
+    HEADERS = [
+        'id', 'date_created', 'date_modified', 'judges', 'date_filed', 
+        'date_filed_is_approximate', 'slug', 'case_name_short', 'case_name', 
+        'case_name_full', 'scdb_id', 'scdb_decision_direction', 'scdb_votes_majority', 
+        'scdb_votes_minority', 'source', 'procedural_history', 'attorneys', 
+        'nature_of_suit', 'posture', 'syllabus', 'headnotes', 'summary', 
+        'disposition', 'history', 'other_dates', 'cross_reference', 'correction', 
+        'citation_count', 'precedential_status', 'date_blocked', 'blocked', 
+        'filepath_json_harvard', 'filepath_pdf_harvard', 'docket_id', 'arguments', 
+        'headmatter'
+    ]
+    
+    # Load WA docket ids
+    wa = set()
+    with open(DOCKET_IDS, "r", encoding="utf-8", errors="replace", newline="") as f:
+        r = csv.reader(f)
+        next(r, None)
+        for row in r:
+            if row:
+                wa.add(row[0])
+    print(f"Loaded WA docket_ids: {len(wa):,} in {time.time()-t0:.2f}s")
+    
+    scanned = 0
+    matched = 0
+    last = time.time()
+    last_scanned = 0
+    
+    with bz2.open(INFILE, "rt", encoding="utf-8", errors="replace", newline="") as fin:
+        reader = csv.reader(fin, quotechar='"', escapechar='\\', doublequote=False)
+        DOCKET_COL = 33  # docket_id index
+        
+        for row in reader:
+            scanned += 1
+            if scanned % 500 == 0:
+                now = time.time()
+                dt = now - last
+                rate = (scanned - last_scanned) / dt if dt > 0 else 0
+                print(f"...scanned {scanned:,} rows; matched {matched:,} | chunk rate {rate:,.0f} rows/sec | elapsed {(now-t0)/60:.1f} min")
+                last = now
+                last_scanned = scanned
+            
+            if len(row) > DOCKET_COL and row[DOCKET_COL] in wa:
+                matched += 1
+                print(f"Matched #{matched} out of {scanned} rows scanned.")
+                
+                # Create JSON object with field names
+                row_dict = {}
+                for i, value in enumerate(row):
+                    if i < len(HEADERS):
+                        row_dict[HEADERS[i]] = value
+                
+                print(json.dumps(row_dict, indent=2))
+                
+                if matched >= 25:
+                    break
+output_25_WA_clusters()
+print(f"Output 25 Washington clusters in {time.time()-t0:.2f}s")
+```
+A typical cluster row looks like this:
+
+```json
+{
+  "id": "3160512",
+  "date_created": "2015-12-07 22:09:07.521221+00",
+  "date_modified": "2024-11-16 07:29:27.979384+00",
+  "judges": "Schindler, Dwyer, Lau",
+  "date_filed": "2015-12-07",
+  "date_filed_is_approximate": "f",
+  "slug": "state-of-washington-v-jorge-luis-lizarraga",
+  "case_name_short": "",
+  "case_name": "State Of Washington v. Jorge Luis Lizarraga",
+  "case_name_full": "The State of Washington, Respondent, v. Jorge Luis Lizarraga, Appellant",
+  "scdb_id": "",
+  "scdb_decision_direction": "",
+  "scdb_votes_majority": "",
+  "scdb_votes_minority": "",
+  "source": "CU",
+  "procedural_history": "",
+  "attorneys": "Lila J. Silverstein (of Washington Appellate Project), for appellant., Daniel T. Satterberg, Prosecuting Attorney, and Dennis J. McCurdy, Deputy, for respondent.",
+  "nature_of_suit": "",
+  "posture": "",
+  "syllabus": "",
+  "headnotes": "",
+  "summary": "",
+  "disposition": "",
+  "history": "",
+  "other_dates": "",
+  "cross_reference": "",
+  "correction": "",
+  "citation_count": "70",
+  "precedential_status": "Published",
+  "date_blocked": "",
+  "blocked": "f",
+  "filepath_json_harvard": "law.free.cap.wash-app.191/530.12460962.json",
+  "filepath_pdf_harvard": "harvard_pdf/3160512.pdf",
+  "docket_id": "3018707",
+  "arguments": "",
+  "headmatter": "<docketnumber id=\"b560-4\">\n    [No. 71532-1-I.\n   </docketnumber><court id=\"AFye\">\n    Division One.\n   </court><decisiondate id=\"ADkP\">\n    December 7, 2015.]\n   </decisiondate><br><parties id=\"b560-5\">\n    The State of Washington,\n    <em>\n     Respondent,\n    </em>\n    v. Jorge Luis Lizarraga,\n    <em>\n     Appellant.\n    </em>\n</parties><br><attorneys id=\"b563-10\">\n<span citation-index=\"1\" class=\"star-pagination\" label=\"533\"> \n     *533\n     </span>\n<em>\n     Lila J. Silverstein\n    </em>\n    (of\n    <em>\n     Washington Appellate Project),\n    </em>\n    for appellant.\n   </attorneys><br><attorneys id=\"b563-11\">\n<em>\n     Daniel T. Satterberg, Prosecuting\n    </em>\n    Attorney, and\n    <em>\n     Dennis J. McCurdy, Deputy,\n    </em>\n    for respondent.\n   </attorneys>"
+}
+```
+
+### Building the whe whitelist
+So, for my initial task of identifying which opinions were within the clusters that were within the dockets that were associated with the courts within the scope of my project, I just needed column 1 (the cluster ID) from every row where column 33 (the docket ID) was in my previously-generated list of docket IDs associated with Washington courts. The cluster ID is the key to getting to an opinion from Court Listener. A cluster ID will take you directly to an opinion: https://www.courtlistener.com/opinion/3160512/any-slug-will-do/ takes you directly to the opinion referenced above (*State v. Lizarraga*, 364 P.3d 810, 191 Wash. App. 530 (2015)).
+
+I accomplished that with the following code:
+```python
+import bz2, csv, time, os, sys
+
+# Bump CSV field limit (some opinions fields are huge)
+try:
+    csv.field_size_limit(sys.maxsize)
+except OverflowError:
+    # Windows/Python sometimes needs a smaller int
+    csv.field_size_limit(2_000_000_000)
+
+OPINIONS_BZ2 = r"C:\Users\orgul\Downloads\opinions-2025-12-02.csv.bz2"
+WA_CLUSTERS  = r"C:\Users\orgul\Downloads\wa_opinion_clusters.csv"
+OUT_CSV      = r"C:\Users\orgul\Downloads\wa_opinions.csv"
+
+LOG_EVERY = 1_000_000
+
+t0 = time.time()
+
+# Load WA cluster_ids
+wa = set()
+with open(WA_CLUSTERS, "r", encoding="utf-8", newline="") as f:
+    r = csv.reader(f)
+    next(r, None)
+    for row in r:
+        if row:
+            wa.add(row[0])
+print(f"Loaded WA cluster_ids: {len(wa):,} in {time.time()-t0:.2f}s")
+
+matched = 0
+scanned = 0
+last = time.time()
+
+with bz2.open(OPINIONS_BZ2, "rt", encoding="utf-8", errors="replace", newline="") as f:
+    r = csv.reader(f, quoting=csv.QUOTE_ALL, escapechar="\\")
+    header = next(r)
+    idx_cluster = header.index("cluster_id") if "cluster_id" in header else (len(header) - 1)
+
+    with open(OUT_CSV, "w", encoding="utf-8", newline="") as out:
+        w = csv.writer(out, quoting=csv.QUOTE_MINIMAL)
+        w.writerow(header)
+
+        for row in r:
+            scanned += 1
+            if len(row) != len(header):
+                continue
+
+            cid = row[idx_cluster]
+            if cid in wa:
+                w.writerow(row)
+                matched += 1
+
+            if scanned % LOG_EVERY == 0:
+                now = time.time()
+                rate = LOG_EVERY / (now - last)
+                elapsed_min = (now - t0) / 60
+                print(f"...scanned {scanned:,} rows; matched {matched:,} | rate {rate:,.0f} rows/sec | elapsed {elapsed_min:.1f} min")
+                last = now
+
+dt = time.time() - t0
+print(f"\nDONE. Scanned {scanned:,} rows; matched {matched:,}")
+print(f"Output: {OUT_CSV}")
+print(f"Elapsed: {dt/60:.2f} min")
+print("OK: WA opinions extract complete")
+```
+That left me with a very large file (68.6 MB) containing all the cluster rows (134,632 in number) in my scope: [wa_opinion_clusters.csv](https://huggingface.co/datasets/orgullomoore/wa_opinion_clusters/resolve/main/wa_opinion_clusters.csv)
+
+### Streaming the opinions file
+Lastly, I had to find all the opinions (or "sub_opinions", as Court Listener calls them) associated with my 134,632 clusters. By way of example, *Roe v. Wade*, [410 U.S. 113](https://www.courtlistener.com/c/us/410/113) (1973) contains three "sub_opinions" in Court Listener's database: the majority opinion authored by Justice Blackmun (opinion ID: 9425157), the concurring opinion authored by Justice Stewart (opinion ID: 9425158), and the dissenting opinion authored by Justice Rehnquist (opinion ID: 9425159).
+
+The header for the opinions file is as follows:
+```json
+{
+  "0": "id",
+  "1": "date_created",
+  "2": "date_modified",
+  "3": "author_str",
+  "4": "per_curiam",
+  "5": "joined_by_str",
+  "6": "type",
+  "7": "sha1",
+  "8": "page_count",
+  "9": "download_url",
+  "10": "local_path",
+  "11": "plain_text",
+  "12": "html",
+  "13": "html_lawbox",
+  "14": "html_columbia",
+  "15": "html_anon_2020",
+  "16": "xml_harvard",
+  "17": "html_with_citations",
+  "18": "extracted_by_ocr",
+  "19": "author_id",
+  "20": "cluster_id"
+}
+```
+
+This was, by far, the most difficult part. The task was, in principle, very simple: I need all rows where column 20 matched one of my 134,632 cluster IDs that I had collected from my previous step. The problem that arose is how to find where one row ends and another begins, when the opinions contain all sorts of XML/HTML tags, quotation marks and other problematic characters, and so forth.
 
 After inspecting bits and pieces of the downloaded compressed files through the command line, ChatGPT told me that Court Listener's files have their own "dialect," by which it means the symbols that signal the end and beginning of an item in the data, and the character used to escape characters that would, if unescaped, mean something, are atypical. After showing it [this post](https://github.com/freelawproject/courtlistener/discussions/6528#discussioncomment-14954403), ChatGPT told me that the dialect used is:
 
@@ -78,6 +446,256 @@ escapechar='\\'
 doublequote=False
 ```
 
+Even after knowing of this dialect, neither ChatGPT nor Claude were able to come up with a way to give me a file that I could import into my database. After many, many failed attempts–each taking hours long, ChatGPT told me quite curtly:
+>Here is the clean diagnosis and the only sane way forward.
+>
+>What is actually wrong (now proven)
+>
+>Your file is **not a CSV of opinions**.
+>
+>It is a **raw text dump where entire opinion bodies are written as standalone physical lines**, *outside of any CSV row structure*.
+>
+>Evidence (from your output):
+>
+>=== lines 77–82 ===
+>
+>77    requiring him to appear restrained at sentencing without conducting an individualized
+>
+>78
+>
+>79    assessment, (3) erred in failing to apply a change to RCW 9.94A.525 when calculating Miller’s
+>
+>80
+>
+>81    offender score, (4) failed to strike the second degree felony murder conviction from Miller’s
+>
+>82
+>
+>These are **plain prose lines**, not:
+>
+>id,date_created,date_modified,...
+>
+>So MySQL is not “mis-parsing” anything.
+>
+>**The file is structurally invalid as CSV.**
+>
+> What actually exists in the source file is:
+>
+>[id, metadata fields..., html/plain_text field starts]
+>
+>newline>
+>
+>newline>
+>
+>newline>
+>
+>more text>
+>
+>more text>
+>
+>...
+>
+>When your cleaner split on newlines, **it created thousands of fake “rows”** where the *first column became `<p id="...">It would seem`*, which then hit MySQL as:
+>
+>id = "<p id=...>"
+>
+>Hence:
+>
+>Incorrect integer value for column 'id'
+>
+>This is not a MySQL issue, a quoting issue, or a datatype issue.
+>
+>It is a **record boundary problem**.
+>
+>---
+>
+>##### ✅ The only correct interpretation
+>
+>Your file is effectively:
+>
+>* CSV header (real)
+>* Some valid CSV rows
+>* Then **unescaped multiline text blobs that were never enclosed in quotes**
+>* Then more CSV-looking fragments
+>* You must **reconstruct logical records**, not parse lines.
+>
+> . . .
+>
+>🚫 What will NEVER work (stop trying)
+>
+>* `LOAD DATA INFILE`
+>* Tweaking delimiters
+>* Escaping quotes
+>* Switching CSV ↔ TSV
+>* MySQL `FIELDS TERMINATED BY`
+>* `IGNORE n LINES`
+>
+>Those tools assume valid records. You do not have valid records.
+>---
+>📌 Hard conclusion
+>
+>You are **not debugging MySQL**.
+>
+>You are **repairing a corrupted logical dataset**.
+>
+>Until the file has:
+>* exactly **1 logical row per opinion**
+>* with **multiline fields properly enclosed or reconstructed**
+> 
+> **No database load will succeed.**
 
+Thus, I had to bring out the big guns and ask Gemini [3 Pro]. I had her review what ChatGPT had done, and she gave me the following solution, which is still running as of the time of the writing, so I cannot confirm it worked, though she says she spot-checked it in several spots and is satisfied that she has the right answer:
+
+```python
+import csv
+import bz2
+import io
+import sys
+import time
+import os
+import datetime
+
+# --- CONFIGURATION ---
+CLUSTERS_PATH = r"C:\Users\orgul\WACL\wa_opinion_clusters.csv"
+OPINIONS_PATH = r"C:\Users\orgul\WACL\opinions-2025-12-02.csv.bz2"
+OUTPUT_PATH   = r"C:\Users\orgul\WACL\wa_opinions.csv"
+
+# --- 1. MAXIMIZE FIELD LIMIT ---
+# Essential for large legal texts
+max_int = sys.maxsize
+while True:
+    try:
+        csv.field_size_limit(max_int)
+        break
+    except OverflowError:
+        max_int = int(max_int // 10)
+
+print(f"--- WA OPINION EXTRACTOR ---")
+print(f"Field limit: {max_int}")
+print(f"Input:       {OPINIONS_PATH}")
+print(f"Output:      {OUTPUT_PATH}")
+
+# --- 2. LOAD WA CLUSTER IDS ---
+print(f"\nLoading filter list from {CLUSTERS_PATH}...")
+wa_cluster_ids = set()
+try:
+    with open(CLUSTERS_PATH, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if "id" in row and row["id"]:
+                wa_cluster_ids.add(row["id"])
+    print(f"Loaded {len(wa_cluster_ids):,} unique WA cluster IDs.")
+except Exception as e:
+    print(f"CRITICAL ERROR loading clusters: {e}")
+    sys.exit(1)
+
+# --- 3. STREAMING EXTRACTION ---
+file_size = os.path.getsize(OPINIONS_PATH)
+print(f"\nStarting extraction on {file_size / (1024**3):.2f} GB file...")
+
+start_time = time.time()
+rows_processed = 0
+rows_matched = 0
+
+try:
+    # Open raw for byte position tracking
+    raw_file = open(OPINIONS_PATH, "rb")
+    bz2_file = bz2.BZ2File(raw_file, "rb")
+    text_wrapper = io.TextIOWrapper(bz2_file, encoding="utf-8", errors="replace", newline="")
+    
+    # CORRECT DIALECT: Postgres export format
+    reader = csv.reader(
+        text_wrapper,
+        quotechar='"',
+        escapechar='\\',
+        doublequote=False,
+    )
+
+    out_file = open(OUTPUT_PATH, "w", encoding="utf-8", newline="")
+    writer = csv.writer(
+        out_file,
+        quotechar='"',
+        escapechar='\\',
+        doublequote=False,
+        quoting=csv.QUOTE_MINIMAL 
+    )
+
+    # Header Processing
+    header = next(reader)
+    writer.writerow(header)
+    
+    try:
+        cluster_idx = header.index("cluster_id")
+    except ValueError:
+        cluster_idx = 20 # Fallback
+
+    # Main Loop
+    for row in reader:
+        rows_processed += 1
+        
+        # Filter Logic
+        if len(row) > cluster_idx:
+            if row[cluster_idx] in wa_cluster_ids:
+                writer.writerow(row)
+                rows_matched += 1
+
+        # Status Update (Time-based to prevent log spam)
+        if rows_processed % 2000 == 0:
+            current_pos = raw_file.tell()
+            progress = current_pos / file_size
+            elapsed = time.time() - start_time
+            
+            if progress > 0.00001:
+                eta_seconds = (elapsed / progress) - elapsed
+                eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
+            else:
+                eta_str = "Calc..."
+                
+            rate = rows_processed / elapsed if elapsed > 0 else 0
+            
+            # Print status line
+            sys.stdout.write(f"\rProgress: {progress*100:.2f}% | Matched: {rows_matched:,} | Rate: {rate:.0f}/s | ETA: {eta_str}   ")
+            sys.stdout.flush()
+
+except KeyboardInterrupt:
+    print("\n\nUser cancelled.")
+except Exception as e:
+    print(f"\n\nFATAL ERROR at row {rows_processed:,}: {e}")
+finally:
+    if 'out_file' in locals(): out_file.close()
+    if 'bz2_file' in locals(): bz2_file.close()
+    if 'raw_file' in locals(): raw_file.close()
+    
+    total_time = time.time() - start_time
+    print(f"\n\n--- COMPLETE ---")
+    print(f"Rows Scanned: {rows_processed:,}")
+    print(f"Rows Matched: {rows_matched:,}")
+    print(f"Time Elapsed: {str(datetime.timedelta(seconds=int(total_time)))}")
+```
+
+I asked Gemini to articulate what the issue was with the prior attempts specifically, and she said:
+<details>
+	<summary>Gemini's explanation</summary>
+
+### The Problem
+The CourtListener opinions file (`opinions-2025-12-02.csv.bz2`) is a raw PostgreSQL database export, not a standard Excel-style CSV.
+1.  **Dialect Mismatch:** Standard CSV parsers expect double-quotes (`""`) to escape quotes inside text. This file uses backslashes (`\"`) to escape quotes. When read with standard settings, Python's CSV reader got confused by quotes inside the opinion text, treating newlines inside the text as new rows, which destroyed the file structure.
+2.  **Field Size Limits:** Legal opinions are massive. Some single fields (the opinion text) exceed Python's default CSV limit of 131,072 characters, causing the script to crash with `_csv.Error: field larger than field limit`.
+
+### The Solution
+I created a robust streaming script that:
+1.  **Configures the CSV Dialect Correctly:** Explicitly sets `escapechar='\\'` and `doublequote=False` to match the PostgreSQL format.
+2.  **Increases Field Limits:** Dynamically sets `csv.field_size_limit` to the maximum integer your system can handle (`sys.maxsize`), preventing crashes on long opinions.
+3.  **Streams Efficiently:** Reads the compressed BZ2 file incrementally (never loading more than a buffer into RAM) while tracking the raw byte position to calculate a real-time ETA based on file size processing rather than row counts.
+
+### Proof It Works
+We proved this via the **Spot Check** script (`Gemini2.py` in your history), which successfully:
+1.  Scanned the file until it found the first Washington opinion (Row 8).
+2.  Extracted the text without error.
+3.  **Verified the column count:** It confirmed the row had exactly **21 columns**, matching the header. If the parsing were still broken, this number would have been random (e.g., 5 or 50) due to split lines.
+
+You are now running the final script with a progress bar and ETA.
+</details>
+We shall see.
 
 (to be continued...)
