@@ -698,7 +698,7 @@ We proved this via the **Spot Check** script (`Gemini2.py` in your history), whi
 
 You are now running the final script with a progress bar and ETA.
 </details>
-Et voilà ! Around 4.5 hours later, I had a 4.22 GB file, [wa_opinions_v3_2025-12-24.csv](https://huggingface.co/datasets/orgullomoore/WA_opinions/resolve/main/wa_opinions_v3_2025-12-24.csv), which contained all my opinions and were ready to import into mysql. I then used the following code to import my data into my table:
+Et voilà ! Around 4.5 hours later, I had a 4.22 GB file, [wa_opinions_v3_2025-12-24.csv](https://huggingface.co/datasets/orgullomoore/WA_opinions/resolve/main/wa_opinions_v3_2025-12-24.csv), which contained all my opinions and were ready to import into my database. I then used the following code to import my data into my table:
 
 ```python
 import csv
