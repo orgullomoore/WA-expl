@@ -799,3 +799,6 @@ if __name__ == "__main__":
     main()
 ```
 Et voilà !  After a few minutes, I had 147,782 rows inserted into my database. 
+
+## Lesson learned
+CourtListener bulk “opinions” is a PostgreSQL COPY ... CSV export. You must parse it with quotechar='"', escapechar='\\', doublequote=False, and raise csv.field_size_limit (opinions routinely exceed 131k chars). If you parse with default CSV settings, the parser will lose quoting context when it encounters backslash-escaped quotes, and then newlines inside the opinion text will be misread as row boundaries—producing “rows” that start with <p id=...> and breaking downstream imports.
