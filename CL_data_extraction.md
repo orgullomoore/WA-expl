@@ -698,6 +698,104 @@ We proved this via the **Spot Check** script (`Gemini2.py` in your history), whi
 
 You are now running the final script with a progress bar and ETA.
 </details>
-We shall see.
+Et voilà ! Around 4.5 hours later, I had a 4.22 GB file, [wa_opinions_v3_2025-12-24.csv](https://huggingface.co/datasets/orgullomoore/WA_opinions/resolve/main/wa_opinions_v3_2025-12-24.csv), which contained all my opinions and were ready to import into mysql. I then used the following code to import my data into my table:
 
-(to be continued...)
+```python
+import csv
+import sys
+
+# --- CONFIG ---
+CSV_FILE = "wa_opinions_v3_2025-12-24.csv"
+BATCH_SIZE = 20  # Conservative batch size for stability
+
+def mysql_escape(value):
+    if value is None:
+        return "NULL"
+    value = value.replace("\\", "\\\\") \
+                 .replace("'", "\\'") \
+                 .replace('"', '\\"') \
+                 .replace("\n", "\\n") \
+                 .replace("\r", "\\r")
+    return f"'{value}'"
+
+def main():
+    if len(sys.argv) < 2:
+        sys.stderr.write("Usage: python csv_to_sql.py <table_name>\n")
+        sys.exit(1)
+    
+    table_name = sys.argv[1]
+    
+    # Increase CSV Field Limit (Fix for 131072 error)
+    max_int = sys.maxsize
+    while True:
+        try:
+            csv.field_size_limit(max_int)
+            break
+        except OverflowError:
+            max_int = int(max_int // 10)
+    
+    columns = [
+        "id", "date_created", "date_modified", "author_str", 
+        "per_curiam", "joined_by_ids", "type", "sha1", 
+        "page_count", "download_url", "local_path", "plain_text", 
+        "html", "html_lawbox", "html_columbia", "html_with_citations", 
+        "extracted_by_ocr", "author_id", "cluster_id"
+    ]
+    col_str = ", ".join(columns)
+    
+    sys.stderr.write(f"Reading {CSV_FILE}...\n")
+    
+    try:
+        with open(CSV_FILE, "r", encoding="utf-8") as f:
+            reader = csv.reader(f, quotechar='"', escapechar='\\', doublequote=False)
+            
+            try:
+                header = next(reader)
+            except StopIteration:
+                return
+
+            batch_values = []
+            
+            for row in reader:
+                if len(row) < 21: continue
+                
+                # MAPPING
+                d_created = row[1].split("+")[0]
+                d_modified = row[2].split("+")[0]
+                per_curiam = 1 if row[4] == 't' else 0
+                ocr = 1 if row[18] == 't' else 0
+                pg_count = row[8] if row[8] else None
+                auth_id = row[19] if row[19] else None
+                
+                vals = [
+                    row[0], d_created, d_modified, row[3], 
+                    per_curiam, row[5], row[6], row[7], 
+                    pg_count, row[9], row[10], row[11], 
+                    row[12], row[13], row[14], row[17], 
+                    ocr, auth_id, row[20]
+                ]
+                
+                escaped_vals = []
+                for v in vals:
+                    if isinstance(v, int):
+                        escaped_vals.append(str(v))
+                    else:
+                        escaped_vals.append(mysql_escape(v))
+                
+                batch_values.append(f"({', '.join(escaped_vals)})")
+                
+                if len(batch_values) >= BATCH_SIZE:
+                    print(f"INSERT INTO {table_name} ({col_str}) VALUES {', '.join(batch_values)};")
+                    batch_values = []
+
+            if batch_values:
+                print(f"INSERT INTO {table_name} ({col_str}) VALUES {', '.join(batch_values)};")
+
+    except Exception as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```
+Et voilà !  After a few minutes, I had 147,782 rows inserted into my database. 
