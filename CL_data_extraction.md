@@ -49,7 +49,7 @@ The output was:
 >
 >. . . 
 
-ChatGPT helped me develop a strategy for tying the data I wanted altogether. Its idea was (in its own words):
+ChatGPT helped me develop a strategy for tying the data I wanted together. Its idea was (in its own words):
 
 1. **Start with opinion clusters, not opinions.** Because Court Listener groups majority opinions, concurrences, and dissents into “clusters” representing a single case disposition, the *cluster* is the right unit of analysis for case law. If you identify which clusters belonged to Washington courts, you can ignore the overwhelming majority of non-Washington data.
 
