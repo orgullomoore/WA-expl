@@ -546,7 +546,7 @@ Even after knowing of this dialect, neither ChatGPT nor Claude were able to come
 > 
 > **No database load will succeed.**
 
-Thus, I had to bring out the big guns and ask Gemini [3 Pro]. I had her review what ChatGPT had done, and she gave me the following solution, which is still running as of the time of the writing, so I cannot confirm it worked, though she says she spot-checked it in several spots and is satisfied that she has the right answer:
+Thus, I had to bring out the big guns and ask Gemini [3 Pro]. I had her review what ChatGPT had done, and she gave me the following solution:
 
 ```python
 import csv
