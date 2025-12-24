@@ -58,7 +58,7 @@ ChatGPT helped me develop a strategy for tying the data I wanted together. Its i
 3. **Build a whitelist of Washington `cluster_id`s.** Once you have a definitive list of Washington-specific cluster IDs, treat that list as a filter and ignore everything else in the opinions table.
 
 
-4. **Stream the opinions file once, filtering on the fly.** Instead of extracting or storing all opinion text, stream through `opinions-2025-12-02.csv.bz2` exactly once, row by row, and write out only those rows whose `cluster_id` appeared in my Washington whitelist.
+4. **Stream the opinions file once, filtering on the fly.** Instead of extracting or storing all opinion text, stream through `opinions-2025-12-02.csv.bz2` exactly once, row by row, and write out only those rows whose `cluster_id` appeared in the Washington whitelist.
 
 ### Opinion clusters
 #### Court abbreviations
